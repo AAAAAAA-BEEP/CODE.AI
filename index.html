@@ -1,10 +1,150 @@
-<!DOCTYPE html>
-<html>
+<!doctype html>
+<html lang="en">
 <head>
-  <title>My AI Coding Assistant</title>
+  <meta charset="utf-8" />
+  <title>AI Coding Assistant (GPT-5)</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    :root { --bg:#0f1720; --card:#111827; --muted:#9ca3af; --accent:#0ea5e9; }
+    body{margin:0;font-family:Inter,system-ui,Arial;background:var(--bg);color:#e6eef6;}
+    .app{display:flex;height:100vh;gap:16px;padding:18px;box-sizing:border-box;}
+    .panel{background:var(--card);flex:1;border-radius:10px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 6px 20px rgba(2,6,23,0.6)}
+    header{padding:12px 16px;border-bottom:1px solid rgba(255,255,255,0.03);display:flex;align-items:center;justify-content:space-between}
+    h1{font-size:16px;margin:0}
+    .editor{padding:12px;flex:1;display:flex;flex-direction:column}
+    textarea#code{flex:1;background:#0b1220;color:#e6eef6;border:none;font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, "Roboto Mono", monospace;font-size:14px;padding:12px;border-radius:6px;resize:vertical;min-height:200px}
+    .controls{margin-top:8px;display:flex;gap:8px;align-items:center}
+    button{background:var(--accent);border:none;color:#022;padding:8px 12px;border-radius:8px;cursor:pointer}
+    .chat-body{padding:12px;flex:1;display:flex;flex-direction:column;overflow:auto;gap:10px}
+    .msg{max-width:85%;padding:10px;border-radius:8px;white-space:pre-wrap}
+    .msg.user{align-self:flex-end;background:#0369a1;color:white}
+    .msg.ai{align-self:flex-start;background:#0f1724;color:#dff}
+    .input-row{display:flex;padding:12px;border-top:1px solid rgba(255,255,255,0.03);gap:8px}
+    input#chat-input{flex:1;padding:10px;border-radius:8px;border:none;background:#071020;color:#e6eef6}
+    small.hint{color:var(--muted)}
+  </style>
 </head>
 <body>
-  <h1>Hello, this is my AI coding website!</h1>
-  <p>Put your code and AI stuff here.</p>
+  <div class="app">
+    <!-- Left: Code editor -->
+    <section class="panel">
+      <header><h1>Code Editor</h1><small class="hint">Select language, write code, then ask the assistant</small></header>
+      <div class="editor">
+        <select id="language" style="margin-bottom:8px;padding:6px;border-radius:6px;border:none;background:#0b1220;color:#e6eef6;width:180px">
+          <option value="javascript">JavaScript</option>
+          <option value="python">Python</option>
+          <option value="html">HTML</option>
+        </select>
+        <textarea id="code">// Write your code here — or paste an error / stacktrace you want help with.</textarea>
+        <div class="controls">
+          <button id="send-code">Ask about this code</button>
+          <button id="send-line">Send selected line</button>
+          <small class="hint">Press Enter in chat input to send messages.</small>
+        </div>
+      </div>
+    </section>
+
+    <!-- Right: Chat -->
+    <section class="panel" style="width:480px;">
+      <header><h1>AI Coding Chat (GPT-5)</h1><small class="hint">Model: gpt-5 (via your server)</small></header>
+
+      <div id="chat" class="chat-body"></div>
+
+      <div class="input-row">
+        <input id="chat-input" placeholder="Ask about your code or general coding questions..." />
+        <button id="send">Send</button>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    // --- small helper UI code ---
+    const chatEl = document.getElementById('chat');
+    const chatInput = document.getElementById('chat-input');
+    const sendBtn = document.getElementById('send');
+    const sendCodeBtn = document.getElementById('send-code');
+    const sendLineBtn = document.getElementById('send-line');
+    const codeEl = document.getElementById('code');
+    const languageEl = document.getElementById('language');
+
+    function appendMessage(text, who='ai') {
+      const d = document.createElement('div');
+      d.className = 'msg ' + (who === 'user' ? 'user' : 'ai');
+      d.textContent = text;
+      chatEl.appendChild(d);
+      chatEl.scrollTop = chatEl.scrollHeight;
+    }
+
+    async function sendToServer(payload) {
+      // update UI while waiting
+      appendMessage('…thinking…', 'ai');
+      try {
+        const res = await fetch('/api/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const json = await res.json();
+        // remove the last thinking message
+        const last = chatEl.querySelectorAll('.msg.ai');
+        if (last.length) last[last.length-1].remove();
+        if (!res.ok) {
+          appendMessage('Error: ' + (json.error || res.statusText), 'ai');
+          return;
+        }
+        appendMessage(json.reply, 'ai');
+      } catch (err) {
+        // remove the last thinking message
+        const last = chatEl.querySelectorAll('.msg.ai');
+        if (last.length) last[last.length-1].remove();
+        appendMessage('Network error: ' + err.message, 'ai');
+      }
+    }
+
+    // send plain chat message
+    sendBtn.onclick = () => {
+      const text = chatInput.value.trim();
+      if (!text) return;
+      appendMessage(text, 'user');
+      chatInput.value = '';
+      sendToServer({
+        type: 'chat',
+        message: text,
+        contextCode: null
+      });
+    };
+
+    chatInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendBtn.click(); }
+    });
+
+    // Ask about entire code
+    sendCodeBtn.onclick = () => {
+      const code = codeEl.value;
+      if (!code.trim()) { appendMessage('You need code in the editor first.', 'ai'); return; }
+      appendMessage('[Asked about code]', 'user');
+      sendToServer({
+        type: 'code',
+        language: languageEl.value,
+        code: code
+      });
+    };
+
+    // Send selected lines only
+    sendLineBtn.onclick = () => {
+      const sel = window.getSelection().toString();
+      const snippet = sel || codeEl.value.split('\\n').slice(0,6).join('\\n');
+      appendMessage('[Sent code snippet]', 'user');
+      sendToServer({
+        type: 'code-snippet',
+        language: languageEl.value,
+        code: snippet
+      });
+    };
+
+    // quick welcome
+    appendMessage('Hi — paste your code on the left, then click "Ask about this code". I will act as a coding assistant (explain, debug, or refactor).', 'ai');
+  </script>
 </body>
 </html>
+
